@@ -1,21 +1,23 @@
 extern crate ansi_term;
-extern crate nix;
-extern crate rosc;
 extern crate dirs;
 extern crate duct;
+extern crate nix;
+extern crate rosc;
 extern crate toml;
+extern crate which;
 
-use std::{thread, time};
 use std::io::{self, Read};
 use std::path::Path;
 use std::process;
+use std::{thread, time};
 
 use duct::cmd;
+use which::which;
 
+mod config;
 mod file;
 mod log_packet;
 mod server;
-mod config;
 
 /// Read code from STDIN and send to Sonic Pi Server.
 ///
@@ -48,12 +50,16 @@ pub fn eval(code: String) {
 /// so siginify this to the user.
 ///
 pub fn check() {
-    let cfg = config::SonicPiToolCfg::read_from_path(config::SonicPiToolCfg::get_default_cfg_file_path());
+    let cfg =
+        config::SonicPiToolCfg::read_from_path(config::SonicPiToolCfg::get_default_cfg_file_path());
     if server::server_port_in_use(cfg.sonic_pi_port) {
         println!("Sonic Pi server listening on port {}", cfg.sonic_pi_port);
         process::exit(0);
     } else {
-        println!("Sonic Pi server NOT listening on port {}", cfg.sonic_pi_port);
+        println!(
+            "Sonic Pi server NOT listening on port {}",
+            cfg.sonic_pi_port
+        );
         process::exit(1);
     }
 }
@@ -65,8 +71,7 @@ pub fn stop() {
 }
 
 // TODO: Colour the word "error:"
-const ADDR_IN_USE_MSG: &str =
-    r#"error: Unable to listen for Sonic Pi server logs, address already in use.
+const ADDR_IN_USE_MSG: &str = r#"error: Unable to listen for Sonic Pi server logs, address already in use.
 
 This may because the Sonic Pi GUI is running and already listening on the desired port.
 If the GUI is running this command cannot function, try running just the Sonic Pi server."#;
@@ -110,11 +115,26 @@ pub fn start_server() {
         paths.insert(0, home);
     };
 
-    match paths
-        .iter()
-        .find(|p| {
-            Path::new(&p).exists()
-        }) {
+    // detect sonic pi path on NixOS
+    if let Ok(sonic_pi_executable) = which("sonic-pi") {
+        let sonic_pi_server_executable = sonic_pi_executable
+            .canonicalize()
+            .unwrap()
+            .parent()
+            .unwrap()
+            .parent()
+            .unwrap()
+            .join("app/server/ruby/bin/");
+        paths.insert(
+            0,
+            sonic_pi_server_executable
+                .into_os_string()
+                .into_string()
+                .unwrap(),
+        );
+    }
+
+    match paths.iter().find(|p| Path::new(&p).exists()) {
         Some(p) => {
             let daemon_exe = format!("{}/daemon.rb", p);
 
@@ -124,9 +144,7 @@ pub fn start_server() {
             let read_bytes = reader.read(&mut buff).unwrap();
             let output = String::from_utf8_lossy(&buff[0..read_bytes]);
             println!("Daemon Running - Output: {}", output);
-            let out_values:Vec<&str> = output.split(' ')
-                                    .map(|s| s.trim())
-                                    .collect();
+            let out_values: Vec<&str> = output.split(' ').map(|s| s.trim()).collect();
             /* Daemon output:
              *
              * daemon.rb outputs 8 ints:
@@ -145,10 +163,10 @@ pub fn start_server() {
              *                                           +---> Token required to communicate with
              *                                           the other processes.
              * */
-            let daemon_port   = out_values[0].parse::<u16>().unwrap();
-            let gui_port      = out_values[1].parse::<u16>().unwrap();
+            let daemon_port = out_values[0].parse::<u16>().unwrap();
+            let gui_port = out_values[1].parse::<u16>().unwrap();
             let sonic_pi_port = out_values[2].parse::<u16>().unwrap();
-            let token         = out_values[7].parse::<i32>().unwrap();
+            let token = out_values[7].parse::<i32>().unwrap();
 
             // Write the ports of the different processes into a config file so other commands know
             // how to reach the right endpoints
@@ -158,7 +176,7 @@ pub fn start_server() {
             loop {
                 server::send_keep_live();
                 thread::sleep(time::Duration::from_secs(5));
-            };
+            }
         }
         None => {
             println!("I couldn't find the Sonic Pi server executable :(");
@@ -189,13 +207,16 @@ pub fn record(path: &str) {
 /// Sync with a Server that is already running (e.g. the Sonic Pi GUI)
 /// Will write the Config file so that other commands can correctly talk to that server.
 /// Refer to the README for more details on how to get the port and token
-pub fn sync(sonic_pi_port:&u16, token: &i32) {
+pub fn sync(sonic_pi_port: &u16, token: &i32) {
     let cur_cfg = &config::SonicPiToolCfg::new(*token, *sonic_pi_port, 0, 0);
     write_config_toml(&cur_cfg);
 }
 
 fn write_config_toml(cfg: &config::SonicPiToolCfg) {
     std::fs::create_dir_all(&config::SonicPiToolCfg::get_default_cfg_folder()).unwrap();
-    std::fs::write(&config::SonicPiToolCfg::get_default_cfg_file_path(),
-                           toml::to_string(cfg).unwrap()).unwrap();
+    std::fs::write(
+        &config::SonicPiToolCfg::get_default_cfg_file_path(),
+        toml::to_string(cfg).unwrap(),
+    )
+    .unwrap();
 }
