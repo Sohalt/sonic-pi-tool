@@ -4,15 +4,14 @@ extern crate duct;
 extern crate nix;
 extern crate rosc;
 extern crate toml;
-extern crate which;
 
+use std::env;
 use std::io::{self, Read};
 use std::path::Path;
 use std::process;
 use std::{thread, time};
 
 use duct::cmd;
-use which::which;
 
 mod config;
 mod file;
@@ -115,24 +114,9 @@ pub fn start_server() {
         paths.insert(0, home);
     };
 
-    // detect sonic pi path on NixOS
-    if let Ok(sonic_pi_executable) = which("sonic-pi") {
-        let sonic_pi_server_executable = sonic_pi_executable
-            .canonicalize()
-            .unwrap()
-            .parent()
-            .unwrap()
-            .parent()
-            .unwrap()
-            .join("app/server/ruby/bin/");
-        paths.insert(
-            0,
-            sonic_pi_server_executable
-                .into_os_string()
-                .into_string()
-                .unwrap(),
-        );
-    }
+    if let Ok(sonic_pi_daemon_dir) = env::var("SONIC_PI_DAEMON_DIR") {
+        paths.insert(0, sonic_pi_daemon_dir);
+    };
 
     match paths.iter().find(|p| Path::new(&p).exists()) {
         Some(p) => {
